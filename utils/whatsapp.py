@@ -3,8 +3,6 @@ import requests
 import threading
 import time
 from dotenv import load_dotenv
-from state.usuarios import usuarios
-
 load_dotenv()
 
 COOLDOWN_MENSAGEM_FINAL = 5
@@ -27,32 +25,41 @@ def enviar_mensagem(numero, texto):
     except Exception as e:
         print(f"❌ Erro ao enviar mensagem: {e}")
 
+from state.usuarios import salvar_dados_sessao, obter_dados_sessao 
+
 def iniciar_timer_inatividade(numero, mensagem, cooldown=30):
     def timeout():
         time.sleep(cooldown)
-        if usuarios.get(numero, {}).get("aguardando_resposta"):
+ 
+        aguardando_resposta_db = obter_dados_sessao(numero, "aguardando_resposta_timer")
+        if aguardando_resposta_db:
             enviar_mensagem(numero, mensagem)
-            usuarios[numero]["aguardando_resposta"] = False
+            salvar_dados_sessao(numero, "aguardando_resposta_timer", False) 
 
-    if numero not in usuarios:
-        usuarios[numero] = {}
-    usuarios[numero]["aguardando_resposta"] = True
+    salvar_dados_sessao(numero, "aguardando_resposta_timer", True) 
+
     threading.Thread(target=timeout).start()
 
-def iniciar_timer_final(numero, mensagem_final):
-    def enviar():
-        if usuarios.get(numero, {}).get("mensagem_final_pendente"):
-            enviar_mensagem(numero, mensagem_final)
-            usuarios[numero]["mensagem_final_pendente"] = False
 
-    if numero not in usuarios:
-        usuarios[numero] = {}
-    usuarios[numero]["mensagem_final_pendente"] = True
-    t = threading.Timer(COOLDOWN_MENSAGEM_FINAL, enviar)
-    usuarios[numero]["timer_mensagem_final"] = t
+_timer_pool = {} 
+
+def iniciar_timer_final(numero, mensagem_final, cooldown=COOLDOWN_MENSAGEM_FINAL):
+
+    def enviar():
+        enviar_mensagem(numero, mensagem_final)
+        if numero in _timer_pool:
+            del _timer_pool[numero] 
+
+    cancelar_timer_final(numero) 
+
+    t = threading.Timer(cooldown, enviar)
+    _timer_pool[numero] = t 
     t.start()
 
 def cancelar_timer_final(numero):
-    if usuarios.get(numero, {}).get("timer_mensagem_final"):
-        usuarios[numero]["timer_mensagem_final"].cancel()
-        usuarios[numero]["mensagem_final_pendente"] = False
+    if numero in _timer_pool and _timer_pool[numero].is_alive():
+        _timer_pool[numero].cancel()
+        del _timer_pool[numero]
+    elif numero in _timer_pool:
+        del _timer_pool[numero]
+

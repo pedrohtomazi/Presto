@@ -58,3 +58,36 @@ def get_resumo_por_id(resumo_id):
         result = cursor.fetchone()
     conn.close()
     return result
+
+def update_user_cargo(numero_usuario, novo_cargo):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cursor:
+            sql = """
+                INSERT INTO usuarios (numero, cargo) VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE cargo = VALUES(cargo)
+            """
+            cursor.execute(sql, (numero_usuario, novo_cargo))
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"Erro ao atualizar cargo do usuário {numero_usuario}: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_user_cargo(numero):
+    conn = get_conn()
+    cargo = "user" 
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT cargo FROM usuarios WHERE numero = %s", (numero,))
+            result = cursor.fetchone()
+            if result and result.get("cargo"):
+                cargo = result["cargo"]
+    except Exception as e:
+        print(f"Erro ao obter cargo do usuário {numero}: {e}")
+    finally:
+        conn.close()
+    return cargo

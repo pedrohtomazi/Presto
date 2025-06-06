@@ -1,22 +1,13 @@
 import requests
-from services.db_service import get_conn
-from state.usuarios import usuarios, definir_etapa
+from services.db_service import get_conn, update_user_cargo, get_user_cargo
+from state.usuarios import definir_etapa, obter_etapa, salvar_dados_sessao, obter_dados_sessao
 from utils.whatsapp import enviar_mensagem
 import json
 import os
 
-# Carrega comandos e mensagens de admin
 with open("admincommands.json", "r", encoding="utf-8") as f:
     admincmds = json.load(f)
     admin_msgs = admincmds["mensagens"]
-
-def is_admin(numero):
-    conn = get_conn()
-    with conn.cursor() as cursor:
-        cursor.execute("SELECT cargo FROM usuarios WHERE numero = %s", (numero,))
-        result = cursor.fetchone()
-    conn.close()
-    return result and result.get("cargo") == "admin"
 
 def buscar_grupos_do_bot():
     token_env = os.getenv("WPP_TOKEN")
@@ -26,7 +17,7 @@ def buscar_grupos_do_bot():
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
-    payload = {}  # vazio retorna tudo
+    payload = {}
 
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=5)
@@ -40,7 +31,6 @@ def buscar_grupos_do_bot():
         grupos = []
         for chat in chats:
             _id = chat.get("id")
-            # Pode vir dict ou string
             if isinstance(_id, dict):
                 wid = _id.get("_serialized", "")
                 server = _id.get("server", "")
@@ -64,11 +54,12 @@ def buscar_grupos_do_bot():
         print("Erro ao buscar grupos:", e)
         return []
 
-
      
 def enviar_mensagem_grupo(grupo_id, texto):
     if not grupo_id.endswith("@g.us"):
         print(f"[ERRO] grupo_id não é grupo: {grupo_id}")
+        return
+
     token_env = os.getenv("WPP_TOKEN")
     session, token = token_env.split(":", 1)
     url = f"http://localhost:21465/api/{session}/send-message"
@@ -77,7 +68,7 @@ def enviar_mensagem_grupo(grupo_id, texto):
         "Content-Type": "application/json"
     }
     payload = {
-    "phone": "120363417070448420@g.us",
+    "phone": grupo_id,
     "isGroup": True,
     "isNewsletter": False,
     "isListId": False,
@@ -90,16 +81,18 @@ def enviar_mensagem_grupo(grupo_id, texto):
         print(f"[admin_commands] Erro ao enviar mensagem no grupo: {e}")
 
 def handle_admin_command(numero, msg):
-    if not is_admin(numero):
+    print(f"DEBUG ADMIN: Início do handle_admin_command. Mensagem: '{msg}'")
+    
+    user_cargo = get_user_cargo(numero)
+    print(f"DEBUG ADMIN: Cargo do usuário '{numero}': '{user_cargo}'")
+
+    if user_cargo not in ["admin", "manager"]:
+        print(f"DEBUG ADMIN: Usuário '{numero}' com cargo '{user_cargo}' não tem acesso geral a comandos admin. Acesso negado.")
         enviar_mensagem(numero, admin_msgs["acesso_negado"])
         return "", 200
 
-    # Garante que o dicionário desse número existe
-    if numero not in usuarios:
-        usuarios[numero] = {}
-
-    # Listar grupos
     if msg.lower().startswith("/grupos"):
+        print("DEBUG ADMIN: Comando /grupos detectado.")
         grupos = buscar_grupos_do_bot()
         if not grupos:
             enviar_mensagem(numero, admin_msgs["sem_grupos"])
@@ -108,27 +101,62 @@ def handle_admin_command(numero, msg):
         for i, g in enumerate(grupos, start=1):
             texto += f"{i}. {g['name']} ({g['id']})\n"
         texto += "\n" + admin_msgs["instrucao_envio"]
-        usuarios[numero]["grupos"] = grupos
+        salvar_dados_sessao(numero, "admin_grupos", grupos)
         definir_etapa(numero, "aguardando_mensagem_grupo")
         enviar_mensagem(numero, texto)
         return "", 200
 
-    # Enviar mensagem para grupo após lista
-    if usuarios[numero].get("etapa") == "aguardando_mensagem_grupo":
+    elif msg.lower().startswith("/setrole"):
+        print("DEBUG ADMIN: Comando /setrole detectado.")
+        partes = msg.split() 
+  
+        if len(partes) != 3:
+            print("DEBUG ADMIN: Formato de /setrole inválido. Partes:", partes)
+            enviar_mensagem(numero, admin_msgs["setrole_instrucao"])
+            return "", 200
+        
+        target_numero_raw = partes[1]
+        novo_cargo = partes[2].lower()
+
+        if not target_numero_raw.endswith("@c.us"):
+            target_numero = f"{target_numero_raw}@c.us"
+        else:
+            target_numero = target_numero_raw
+
+        cargos_validos = ["user", "admin", "manager"]
+        if novo_cargo not in cargos_validos:
+            print(f"DEBUG ADMIN: Cargo inválido: '{novo_cargo}'. Cargos válidos: {cargos_validos}")
+            enviar_mensagem(numero, admin_msgs["setrole_cargo_invalido"].replace("{{cargos_validos}}", ", ".join(cargos_validos)))
+            return "", 200
+        
+        if update_user_cargo(target_numero, novo_cargo):
+            print(f"DEBUG ADMIN: Sucesso ao setar cargo '{novo_cargo}' para '{target_numero_raw}'")
+            enviar_mensagem(numero, admin_msgs["setrole_sucesso"].replace("{{numero}}", target_numero_raw).replace("{{cargo}}", novo_cargo))
+        else:
+            print(f"DEBUG ADMIN: Falha ao setar cargo para '{target_numero_raw}'")
+            enviar_mensagem(numero, admin_msgs["setrole_invalido"])
+        
+        definir_etapa(numero, "menu")
+        return "", 200
+
+    etapa_do_usuario = obter_etapa(numero)
+    if etapa_do_usuario == "aguardando_mensagem_grupo":
+        print("DEBUG ADMIN: Etapa 'aguardando_mensagem_grupo'.")
         partes = msg.split(" ", 1)
         if len(partes) == 2 and partes[0].isdigit():
             idx = int(partes[0]) - 1
-            grupos = usuarios[numero].get("grupos", [])
-            if 0 <= idx < len(grupos):
-                grupo_id = grupos[idx]["id"]
+            grupos_salvos = obter_dados_sessao(numero, "admin_grupos") or []
+            if 0 <= idx < len(grupos_salvos):
+                grupo_id = grupos_salvos[idx]["id"]
                 texto = partes[1]
                 enviar_mensagem_grupo(grupo_id, texto)
                 enviar_mensagem(numero, admin_msgs["mensagem_enviada"])
                 definir_etapa(numero, "menu")
+                salvar_dados_sessao(numero, "admin_grupos", None)
                 return "", 200
         enviar_mensagem(numero, admin_msgs["formato_invalido"])
         return "", 200
 
-    # Fallback para qualquer outro comando admin
+    print(f"DEBUG ADMIN: Comando admin não reconhecido: '{msg}'")
     enviar_mensagem(numero, "Comando admin não reconhecido.")
     return "", 200
