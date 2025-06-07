@@ -4,7 +4,7 @@
 
 [![Licença MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Feito com Python](https://img.shields.io/badge/Python-3.x-blue.svg)](https://www.python.org/)
-[![Status: Alpha](https://img.shields.io/badge/Status-Beta-orange.svg)](https://github.com/pedrohtomazi/Presto/releases/tag/v0.1.0)
+![Status: Alpha](https://img.shields.io/badge/Status-Alpha-yellow.svg)Status-Alpha-yellow.svg))](https://github.com/pedrohtomazi/Presto/releases/tag/v0.1.0)
 
 Presto é um projeto inovador que visa centralizar o acesso a conteúdos acadêmicos e resumos de estudo, começando como um assistente interativo via WhatsApp e evoluindo para uma plataforma web e um aplicativo móvel completos.
 
